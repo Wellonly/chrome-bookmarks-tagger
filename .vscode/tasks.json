@@ -1,0 +1,32 @@
+{
+  "tasks": [
+    {
+      "type": "shell",
+      "label": "C/C++: g++ build active file",
+      "command": "/usr/bin/g++",
+      "args": [
+        "-lm",
+        "-fno-stack-limit",
+        "-fdiagnostics-color=always",
+        "-Wall",
+        "-g",
+        "-Iinclude",
+        "${file}",
+        "-o",
+        "${fileDirname}/tagger.bin"
+      ],
+      "options": {
+        "cwd": "${fileDirname}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "detail": "Task generated for zv"
+    }
+  ],
+  "version": "2.0.0"
+}

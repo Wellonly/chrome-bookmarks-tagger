@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "typeinfo": "cpp",
+    "cassert": "cpp",
+    "algorithm": "cpp",
+    "utility": "cpp"
+  }
+}
