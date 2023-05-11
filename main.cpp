@@ -140,17 +140,17 @@ void remove_doublequotes(std::string& src)
 
 void json_print_tag_url_title(const json& object, std::ofstream& file) {
     if (object.contains("tags")) {
-       file << object["tags"];
+       file << object["tags"] << " ";
     }
     else {
-       file << "#notags";
+       file << "#notags ";
     }
-    file << object["uri"];
+    file << object["uri"] << " ";
     if (object.contains("title")) {
        file << object["title"] << endl;
     }
     else {
-       file << "#notitle" << endl;
+       file << "#notitle " << endl;
     }
 }
 
@@ -165,18 +165,24 @@ void json_children_traverse(const json& object, std::ofstream& file) {
     }
 }
 
-
 int main(int argc, char **argv) {
     try {
-        if (argc != 2)
+        if (argc < 2)
         {
             printf("Input file missing!\n");
             return EXIT_FAILURE;
         }
+        string inJsonFName, outHtmlFName, tag;
+        inJsonFName.assign(argv[1]);
+        if (argc > 2) outHtmlFName.assign(argv[2]);
+        if (argc > 3) tag.assign(argv[3]); else tag.assign("#_");
 
-        printf("Attempting to parse %s\n", argv[1]);
+        printf("%s will start with %d params:\n", argv[0], argc);
+        printf("1: JSON: %s\n", inJsonFName.c_str());
+        printf("2: HTML: %s\n", outHtmlFName.c_str());
+        printf("3: Tag usage: %s\n", tag.c_str());
 
-        std::ifstream json_file(argv[1]);
+        std::ifstream json_file(inJsonFName);
         std::ofstream txt_file(URLS_FNAME);
         json data;
         json_file >> data;
