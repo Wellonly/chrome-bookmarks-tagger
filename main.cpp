@@ -1,225 +1,130 @@
 #include <iostream>
-#include <vector>
-#include <stdexcept>
-#include <fstream>
+#include <map>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include "exception.hpp"
 
-#include "json.hpp"
-using json = nlohmann::json;
 using namespace std;
+using ptree = boost::property_tree::ptree;
 
-#define URLS_FNAME "urls.txt"
-#define URLS_DECODED_FNAME "urls_list_decoded.txt"
+#define TOKEN_DTA_HREF "<DT><A HREF="
+#define TOKEN_A_CLOSER "</A>"
+#define TAGS_DELIMETER " "
 
-std::string urldecode3(const std::string& src)
-{
-  std::string dst;
-  char a, b;
-  for (std::size_t i = 0; i < src.size(); ++i) {
-    if (src[i] == '%' && i + 2 < src.size() &&
-        (a = src[i + 1]) && (b = src[i + 2]) &&
-        std::isxdigit(a) && std::isxdigit(b)) {
-      if (a >= 'a') {
-        a -= 'a' - 'A';
-      }
-      if (a >= 'A') {
-        a -= 'A' - 10;
-      } else {
-        a -= '0';
-      }
-      if (b >= 'a') {
-        b -= 'a' - 'A';
-      }
-      if (b >= 'A') {
-        b -= 'A' - 10;
-      } else {
-        b -= '0';
-      }
-      dst += 16 * a + b;
-      i += 2;
-    } else if (src[i] == '+') {
-      dst += ' ';
-    } else {
-      dst += src[i];
-    }
+map<string, string> UrlsMap;
+const ptree EmptyTree;
+string TagPrefix = TAGS_DELIMETER;
+
+/// @brief prefix Tags
+/// @param tags: string with comma delimeter
+/// @return string: prefixed tags delimited by TAGS_DELIMETER
+string prefixTags(const string& tags) {
+  string tagsPrefixed;
+  if (!tags.empty()) {
+    size_t commaPos=0, nextCommaPos;
+    do {
+      nextCommaPos = tags.find(',', commaPos);
+      tagsPrefixed += TagPrefix + tags.substr(commaPos, nextCommaPos-commaPos);
+      commaPos=nextCommaPos+1;
+    } while (nextCommaPos != string::npos);
   }
-  return dst;
+  return tagsPrefixed;
 }
 
-std::string extracturi(const std::string& src)
-{
-    auto result = std::search(src.begin(), src.end(), "https%3A%2F%2F", "https%3A%2F%2F" + 14);
-    if (result != src.end()) {
-        return std::string(result, src.end());
-    } else {
-        result = std::search(src.begin(), src.end(), "http%3A%2F%2F", "http%3A%2F%2F" + 13);
-        if (result != src.end()) {
-            return std::string(result, src.end());
-        }
-        // Neither http or https was found
+/// @brief recursive fill UrlsMap with urls and its prefixed tags
+/// @param jtree 
+void mapUrlsFromJson(const ptree& jtree) {
+    const auto& uri = jtree.get<string>("uri", "");
+    if (!uri.empty()) {
+      const auto& tags = jtree.get<string>("tags", "");
+      auto result = UrlsMap.insert(make_pair(uri, prefixTags(tags)));
+      if (!result.second) { cout << "found doubled url: " << uri << endl; }
     }
-    return src;
+    else {
+      const ptree& childs = jtree.get_child("children", EmptyTree);
+      for (const auto& child: childs) {
+        mapUrlsFromJson(child.second);
+      }
+    }
 }
 
-std::string::const_iterator lazysearch(const std::string* src, const std::string& what) {
-    size_t pos = 0;
-    while (pos < src->size()) {
-        size_t foundPos = src->find(what, pos);
-        if (foundPos == std::string::npos) {
-            break;  // what was not found
-        }
+/// @brief reTag Bookmarks Html File
+/// @param string srcFName
+/// @return int: count of urls processed
+int reTagBookmarksHtmlFile(const string& srcFName) {
+    string taggedFName(srcFName.substr(0, srcFName.find(".html")).append("-tagged.html"));
 
-        // what was found at foundPos
-        return src->begin() + foundPos;  // Return an iterator to the found position
-        pos = foundPos + 1;  // Start the next search at the next character
+    std::ifstream src(srcFName);
+    if (!src.is_open()) return -1;
+    std::ofstream dst(taggedFName);
+    if (!dst.is_open()) {
+      src.close();
+      return -1;
     }
 
-    return src->end();  // what was not found, return an iterator to the end of the string
-}
-
-std::string parseline(const std::string& src)
-{
-    std::string uri_output;
-    auto found_moz_uri = lazysearch(&src, "&u=http"); // moz-extension://page_title http(s)://url.com
-    if (found_moz_uri != src.end()) {
-        auto res = std::string(found_moz_uri+3, src.end());
-        uri_output = extracturi(res);
-    }else{
-        auto found_moz_local = lazysearch(&src, "&u=file"); // moz-extension://page_title "local.file"
-        if (found_moz_local != src.end()) {
-            auto res = std::string(found_moz_local+3, src.end());
-            uri_output = extracturi(res);
-        }else{
-            auto found_moz_other = lazysearch(&src, "moz-extension://"); // moz-extension:// other formats
-            if (found_moz_other != src.end()) {
-                auto res = std::string(found_moz_other, src.end());
-                uri_output = extracturi(res);
+    int linecounter=0, urlcounter=0;
+    std::string line;
+    while (std::getline(src, line)) {
+        linecounter++;
+        auto hrefPos = line.find(TOKEN_DTA_HREF);
+        if (hrefPos == string::npos) {
+          dst << line << endl;
+        }
+        else {
+          urlcounter++;
+          size_t urlPos = hrefPos+sizeof(TOKEN_DTA_HREF);
+          auto endUrlPos = line.find("\"", urlPos);
+          if (endUrlPos == string::npos) { //if not found a close quote then write back original line...
+            dst << line << endl;
+            cout << "WARN: not found close quote at line:" << linecounter << " : "<< line << endl;
+          }
+          else {
+            string url(line.substr(urlPos, endUrlPos-urlPos));
+            auto found = UrlsMap.find(url);
+            if (found != UrlsMap.end()) {
+              auto firstTagPos = line.find(TagPrefix, endUrlPos);
+              int saveLineSize = firstTagPos == string::npos ? line.length()-sizeof(TOKEN_A_CLOSER): firstTagPos;
+              string lineBeforePrefix(line.substr(0, saveLineSize));
+              dst << lineBeforePrefix << (*found).second << TOKEN_A_CLOSER << endl;
             }
-            else uri_output = src; // otherwise, copy source
-        }
-    }    
-    
-    std::string output_url = urldecode3(uri_output);
-    return output_url;
-}
-
-
-class my_exception : public std::runtime_error {
-    std::string msg;
-public:
-    my_exception(const std::string &arg, const char *file, int line) :
-    std::runtime_error(arg) {
-        std::ostringstream o;
-        o << file << ":" << line << ": " << arg;
-        msg = o.str();
-    }
-    ~my_exception() throw() {}
-    const char *what() const throw() {
-        return msg.c_str();
-    }
-};
-#define throw_line(arg) throw my_exception(arg, __FILE__, __LINE__);
-
-/*void f() {
-    throw_line("Oh no!");
-}*/
-
-void remove_doublequotes(std::string& src)
-{
-    // Check if the string begins with '\"'
-    if (src.front() == '\"') {
-        // Remove the first character from the string
-        src.erase(src.begin());
-    }
-
-    // Check if the string ends with '\"'
-    if (src.back() == '\"') {
-        // Remove the last character from the string
-        src.pop_back();
-    }
-}
-
-void json_print_tag_url_title(const json& object, std::ofstream& file) {
-    if (object.contains("tags")) {
-       file << object["tags"] << " ";
-    }
-    else {
-       file << "#notags ";
-    }
-    file << object["uri"] << " ";
-    if (object.contains("title")) {
-       file << object["title"] << endl;
-    }
-    else {
-       file << "#notitle " << endl;
-    }
-}
-
-void json_children_traverse(const json& object, std::ofstream& file) {
-    if (object.contains("uri")) {
-        json_print_tag_url_title(object, file);
-    }
-    if (object.contains("children")) {
-        for (const auto& child : object["children"]) {
-            json_children_traverse(child, file);
+            else { // if not found url then simple copy back the line...
+              dst << line << endl;
+            }
+          }
         }
     }
+    dst.close();
+    src.close();
+    return urlcounter;
 }
 
 int main(int argc, char **argv) {
     try {
-        if (argc < 2)
-        {
-            printf("Input file missing!\n");
-            return EXIT_FAILURE;
-        }
-        string inJsonFName, outHtmlFName, tag;
-        inJsonFName.assign(argv[1]);
-        if (argc > 2) outHtmlFName.assign(argv[2]);
-        if (argc > 3) tag.assign(argv[3]); else tag.assign("#_");
+      if (argc < 3) {
+          printf("Usage: %s <FF_bookmarks.json> <Chrome_bookmarks.html> [tag_prefix='#_']\n", argv[0]);
+          return EXIT_FAILURE;
+      }
+      string jsonFName, htmlFName;
+      jsonFName.assign(argv[1]);
+      htmlFName.assign(argv[2]);
+      if (argc > 3) TagPrefix.append(argv[3]); else TagPrefix.append("#_");
 
-        printf("%s will start with %d params:\n", argv[0], argc);
-        printf("1: JSON: %s\n", inJsonFName.c_str());
-        printf("2: HTML: %s\n", outHtmlFName.c_str());
-        printf("3: Tag usage: %s\n", tag.c_str());
+      printf("%s starts with %d params:\n", argv[0], argc);
+      printf("1: JSON: %s\n", jsonFName.c_str());
+      printf("2: HTML: %s\n", htmlFName.c_str());
+      printf("3: Tag usage: %s\n", TagPrefix.c_str());
 
-        std::ifstream json_file(inJsonFName);
-        std::ofstream txt_file(URLS_FNAME);
-        json data;
-        json_file >> data;
-        json_children_traverse(data, txt_file);
-        txt_file.close();
+      ptree jtree;
+      read_json(jsonFName, jtree);
 
-        std::ifstream in_file(URLS_FNAME);
-        std::ofstream out_file(URLS_DECODED_FNAME);
-        
-        int linecounter=0;
-        if (in_file.is_open()) {
-            std::string line;
-            while (std::getline(in_file, line)) {
-                linecounter++;
+      mapUrlsFromJson(jtree);
 
-                std::cout << std::setw(4) << linecounter << " " << line << endl;
-                
-                if (out_file.is_open()) {
-                    // Call the function to remove the '\"' characters from the string
-                    remove_doublequotes(line);
-
-                    // continue processing
-                    out_file << parseline(line);
-    		        out_file << std::endl;
-                }
-            }
-            out_file.close();
-            in_file.close();
-        }
-        std::cout << std::endl << std::endl;
-
-        std::cout << "Processed " << linecounter << " amount of lines" << std::endl;
-	// std::remove(URLS_FNAME); // delete temporary file
+      int urlCounter = reTagBookmarksHtmlFile(htmlFName);
+      cout << endl << "Succefully processed urls:" << urlCounter << endl;
     }
     catch (const std::runtime_error &ex) {
-        std::cout << ex.what() << std::endl;
+      cout << ex.what() << std::endl;
+      return EXIT_FAILURE;
     }
-    return 0;
+    return EXIT_SUCCESS;
 }
-

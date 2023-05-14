@@ -2,7 +2,13 @@
   "tasks": [
     {
       "type": "shell",
+      "label": "terminal clear",
+      "command": "clear",
+    },
+    {
+      "type": "shell",
       "label": "C/C++: g++ build active file",
+      "dependsOn":["terminal clear"], 
       "command": "/usr/bin/g++",
       "args": [
         "-lm",
