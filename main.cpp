@@ -1,5 +1,7 @@
 #include <iostream>
 #include <map>
+#include <set>
+#include <ctime>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include "exception.hpp"
@@ -10,8 +12,10 @@ using ptree = boost::property_tree::ptree;
 #define TOKEN_DTA_HREF "<DT><A HREF="
 #define TOKEN_A_CLOSER "</A>"
 #define TAGS_DELIMETER " "
+#define TAGS_LIST_PATH "Bookmarks/Bookmarks bar/All/tags" //TODO: create/update the list on the path
 
 map<string, string> UrlsMap;
+set<string> TagSet;
 const ptree EmptyTree;
 string TagPrefix = TAGS_DELIMETER;
 
@@ -46,6 +50,46 @@ void mapUrlsFromJson(const ptree& jtree) {
         mapUrlsFromJson(child.second);
       }
     }
+}
+
+/// @brief recursive fill TagSet with urls as bookmarks search query
+/// @param jtree 
+void mapTagsFromJson(const ptree& jtree) {
+    const auto& uri = jtree.get<string>("uri", "");
+    if (!uri.empty()) {
+      const auto& tags = jtree.get<string>("tags", "");
+      if (!tags.empty()) {
+        size_t commaPos=0, nextCommaPos;
+        do {
+          nextCommaPos = tags.find(',', commaPos);
+          TagSet.insert(tags.substr(commaPos, nextCommaPos-commaPos));
+          commaPos=nextCommaPos+1;
+        } while (nextCommaPos != string::npos);
+      }
+    }
+    else {
+      const ptree& childs = jtree.get_child("children", EmptyTree);
+      for (const auto& child: childs) {
+        mapTagsFromJson(child.second);
+      }
+    }
+}
+
+/// @brief fill -tags.html file with tag list
+/// @param srcFName source/target html file
+/// @return count of tags
+size_t updateBookmarksTagsList(const string& srcFName) {
+    string tagsFName(srcFName.substr(0, srcFName.find(".html")).append("-tags.html"));
+    std::ofstream tagsFile(tagsFName);
+    if (!tagsFile.is_open()) {
+      return -1;
+    }
+    auto time_unix = time(NULL);
+    for (const auto& tag: TagSet) {
+      tagsFile << TOKEN_DTA_HREF << "\"chrome://bookmarks/?q=_" << tag << "\" ADD_DATE=\"" << time_unix <<"\">" << tag << TOKEN_A_CLOSER << endl;
+    }
+    tagsFile.close();
+    return TagSet.size();
 }
 
 /// @brief reTag Bookmarks Html File
@@ -117,10 +161,13 @@ int main(int argc, char **argv) {
       ptree jtree;
       read_json(jsonFName, jtree);
 
+      mapTagsFromJson(jtree);
       mapUrlsFromJson(jtree);
 
+      auto tagsCount = updateBookmarksTagsList(htmlFName);
       int urlCounter = reTagBookmarksHtmlFile(htmlFName);
       cout << endl << "Succefully processed urls:" << urlCounter << endl;
+      cout << "Tags count:" << tagsCount << endl;
     }
     catch (const std::runtime_error &ex) {
       cout << ex.what() << std::endl;
